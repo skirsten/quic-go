@@ -1428,7 +1428,15 @@ func (s *session) sendPackets() error {
 
 	var sentPacket bool // only used in for packets sent in send mode SendAny
 	for {
-		switch sendMode := s.sentPacketHandler.SendMode(); sendMode {
+		sendMode := s.sentPacketHandler.SendMode()
+		if sendMode == ackhandler.SendAny && s.handshakeComplete && !s.sentPacketHandler.HasPacingBudget() {
+			s.pacingDeadline = s.sentPacketHandler.TimeUntilSend()
+			if sentPacket {
+				return nil
+			}
+			sendMode = ackhandler.SendAck
+		}
+		switch sendMode {
 		case ackhandler.SendNone:
 			return nil
 		case ackhandler.SendAck:
@@ -1455,10 +1463,6 @@ func (s *session) sendPackets() error {
 				return err
 			}
 		case ackhandler.SendAny:
-			if s.handshakeComplete && !s.sentPacketHandler.HasPacingBudget() {
-				s.pacingDeadline = s.sentPacketHandler.TimeUntilSend()
-				return nil
-			}
 			sent, err := s.sendPacket()
 			if err != nil || !sent {
 				return err
