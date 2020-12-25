@@ -540,7 +540,10 @@ func (s *session) run() error {
 		}
 	}
 
-	var closeErr closeError
+	var (
+		closeErr           closeError
+		sendQueueAvailable <-chan struct{}
+	)
 
 runLoop:
 	for {
@@ -563,8 +566,9 @@ runLoop:
 			// We do all the interesting stuff after the switch statement, so
 			// nothing to see here.
 		case <-s.sendingScheduled:
-			// We do all the interesting stuff after the switch statement, so
-			// nothing to see here.
+		// We do all the interesting stuff after the switch statement, so
+		// nothing to see here.
+		case <-sendQueueAvailable:
 		case p := <-s.receivedPackets:
 			// Only reset the timers if this packet was actually processed.
 			// This avoids modifying any state when handling undecryptable packets,
@@ -614,11 +618,21 @@ runLoop:
 			}
 		}
 
+		if s.sendQueue.WouldBlock() {
+			sendQueueAvailable = s.sendQueue.Available()
+			continue
+		}
 		if err := s.sendPackets(); err != nil {
 			s.closeLocal(err)
 		}
+		if s.sendQueue.WouldBlock() {
+			sendQueueAvailable = s.sendQueue.Available()
+		} else {
+			sendQueueAvailable = nil
+		}
 	}
 
+	// TODO: think about what happens if the send queue is blocked
 	s.handleCloseError(closeErr)
 	if !errors.Is(closeErr.err, errCloseForRecreating{}) && s.tracer != nil {
 		s.tracer.Close()
@@ -1494,6 +1508,9 @@ func (s *session) sendPackets() error {
 			sentPacket = true
 		default:
 			return fmt.Errorf("BUG: invalid send mode %d", sendMode)
+		}
+		if s.sendQueue.WouldBlock() {
+			return nil
 		}
 	}
 }
